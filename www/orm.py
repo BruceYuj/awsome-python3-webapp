@@ -13,7 +13,7 @@ def create_args_string(num):
 	L=[]
 	for n in range(num):
 		L.append('?')
-	return ','.join(L)
+	return ', '.join(L)
 
 async def create_pool(loop,**kw):
 	logging.info('create database connection pool...')
@@ -34,27 +34,33 @@ async def create_pool(loop,**kw):
 async def select(sql,args,size=None):
 	log(sql,args)
 	global __pool
-	with (await __pool) as conn:
-		cur=await conn.cursor(aiomysql.DictCursor)
-		await cur.execute(sql.replace('?','%s'),args or ())
-		if size:
-			rs=await cur.fetchmany(size)
-		else:
-			rs=await cur.fetchall()
-		await cur.close()
+	async with (__pool.get()) as conn:
+		async with  conn.cursor(aiomysql.DictCursor) as cur:
+			await cur.execute(sql.replace('?','%s'),args or ())
+			if size:
+				rs=await cur.fetchmany(size)
+			else:
+				rs=await cur.fetchall()
 		logging.info('row returned: %s'% len(rs))
 		return rs
 	
-async execute(sql,args)
+async def execute(sql,args,autocommit=True):
 	log(sql,args)
-	with (await __pool) as conn:
+	async with __pool.get() as conn:
 		#为什么需要抛出异常
+		if not autocommit:
+			await conn.begin()
 		try:
-			cur=await conn.cursor(aiomysql.DictCursor)
-			await cur.execute(sql.replace('?','%s'),args)
-			affected=cur.rowcount
-			await cur.close()
+			async with conn.cursor(aiomysql.DictCursor) as cur:
+				await cur.execute(sql.replace('?','%s'),args)
+			#	print(sql,'------')
+				affected=cur.rowcount
+			if not autocommit:
+				await conn.commit()
+			#await cur.close()
 		except BaseException as e:
+			if not autocommit:
+				await conn.rollback()
 			raise
 		return affected
 	
@@ -77,7 +83,7 @@ class TextField(Field):
 	def __init__(self,name=None,default=None):
 		super().__init__(name,'text',False,default)
 		
-class IntergerField(Field):
+class IntegerField(Field):
 	def __init__(self,name=None,primary_key=False,default=0):
 		super().__init__(name,'bigint',primary_key,default)
 		
@@ -95,7 +101,7 @@ class ModelMetaclass(type):
 	
 	def __new__(cls,name,bases,attrs):
 		#排除Model类本身：
-		if name='Model':
+		if name=='Model':
 			return type.__new__(cls,name,bases,attrs)
 		
 		tableName=attrs.get('__table__',None) or name
@@ -108,7 +114,7 @@ class ModelMetaclass(type):
 			if isinstance(v,Field):
 				logging.info('  found mapping: %s==> %s'%(k,v))
 				mappings[k]=v
-				if k.primary_key:
+				if v.primary_key:
 					if primaryKey:
 						raise RuntimeError('Duplicated primary key for fields: %s'%k)
 					primaryKey=k
@@ -119,18 +125,20 @@ class ModelMetaclass(type):
 		#没有理解
 		for k in mappings.keys():
 			attrs.pop(k)
-		escaped_fields=list(map(lambda f:'‘%s‘'%f,fields))
+		escaped_fields=list(map(lambda f:'`%s`'%f,fields))
 		attrs['__mappings__']=mappings
 		attrs['__table__']=tableName
 		attrs['__primary_key__']=primaryKey
 		attrs['__fields__']=fields#除主键外的所有属性名称
 		
-		attrs['__select__']='select ‘%s‘, %s from ‘%s‘' %(primaryKey,', '.join(escaped_fields),tableName)
-		attrs['__insert__']='insert into ‘%s‘ (%s, ‘%s‘) values (%s)' %(tableName,', '.join(escaped_fields),
+		#表名上加上引号会出现问题，不知道为什么
+		attrs['__select__']='select `%s`, %s from `%s`' %(primaryKey,', '.join(escaped_fields),tableName)
+		attrs['__insert__']='insert into `%s` (%s, `%s`) values (%s)' %(tableName,', '.join(escaped_fields),
 		primaryKey,create_args_string(len(escaped_fields)+1))
-		attrs['__update__']='update ‘%s‘ set %s where ‘%s‘=?'%(tableName,', '.join(
-		map(lambda f:'‘%s‘=?'%(mappings.get(f).name or f),fields)),primaryKey)
-		attrs['__delete__']='delete from ‘%s‘ where ‘%s‘=?'%(tableName,primaryKey)
+		#print(attrs['__insert__'])
+		attrs['__update__']='update `%s` set %s where `%s`=?'%(tableName,', '.join(
+		map(lambda f:'`%s`=?'%(mappings.get(f).name or f),fields)),primaryKey)
+		attrs['__delete__']='delete from `%s` where `%s`=?'%(tableName,primaryKey)
 		return type.__new__(cls,name,bases,attrs)
 	
 class Model(dict,metaclass=ModelMetaclass):
@@ -150,6 +158,7 @@ class Model(dict,metaclass=ModelMetaclass):
 	def getValue(self,key):
 		return getattr(self,key,None)
 	
+	#这一个函数是神来之笔，default可以直接传递函数
 	def getValueOrDefault(self,key):
 		value=getattr(self,key,None)
 		if value is None:
@@ -198,7 +207,7 @@ class Model(dict,metaclass=ModelMetaclass):
 	@classmethod
 	async def findNumber(cls,selectField,where=None,args=None):
 		'find number by select and where.'
-		sql=['select %s _num_ from ‘%s‘'%(selectField,cls.__table__)]
+		sql=['select %s _num_ from `%s`'%(selectField,cls.__table__)]
 		if where:
 			sql.append('where')
 			sql.append(where)
@@ -208,8 +217,11 @@ class Model(dict,metaclass=ModelMetaclass):
 		return rs[0]['__num__']
 	
 	async def save(self):
+		print('----------')
 		args=list(map(self.getValueOrDefault,self.__fields__))
+		print(args)
 		args.append(self.getValueOrDefault(self.__primary_key__))
+		print(args)
 		rows=await execute(self.__insert__,args)
 		if rows!=1:
 			logging.warn('failed to insert record:affected rows:%s'%rows)
@@ -226,3 +238,4 @@ class Model(dict,metaclass=ModelMetaclass):
 		rows=await execute(self.__delete__,args)
 		if row!=1:
 			logging.warn('failed to remove by primary key: affected rows: %s'%rows)
+
