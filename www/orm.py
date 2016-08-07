@@ -36,6 +36,7 @@ async def select(sql,args,size=None):
 	global __pool
 	async with (__pool.get()) as conn:
 		async with  conn.cursor(aiomysql.DictCursor) as cur:
+			#print(sql,'-------')
 			await cur.execute(sql.replace('?','%s'),args or ())
 			if size:
 				rs=await cur.fetchmany(size)
@@ -172,7 +173,7 @@ class Model(dict,metaclass=ModelMetaclass):
 	@classmethod
 	async def find(cls,pk):
 		'find object by primary key.'
-		rs=await select('%s where ‘%s‘=?'%(cls.__select__,cls.__primary_key__),[pk],1)
+		rs=await select('%s where `%s`=?'%(cls.__select__,cls.__primary_key__),[pk],1)
 		if len(rs)==0:
 			return None
 		return cls(**rs[0])#没有理解,是否是返回一个cls实例
@@ -188,7 +189,7 @@ class Model(dict,metaclass=ModelMetaclass):
 			args=[]
 		orderBy=kw.get('orderBy',None)
 		if orderBy:
-			sql.append('orderBy')
+			sql.append('order by')
 			sql.append(orderBy)
 		limit=kw.get('limit',None)
 		if limit is not None:
