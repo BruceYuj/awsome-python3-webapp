@@ -132,7 +132,7 @@ class ModelMetaclass(type):
 		attrs['__primary_key__']=primaryKey
 		attrs['__fields__']=fields#除主键外的所有属性名称
 		
-		#表名上加上引号会出现问题，不知道为什么
+		#表名上加上引号会出现问题，不知道为什么(mysql需要添加反引号)
 		attrs['__select__']='select `%s`, %s from `%s`' %(primaryKey,', '.join(escaped_fields),tableName)
 		attrs['__insert__']='insert into `%s` (%s, `%s`) values (%s)' %(tableName,', '.join(escaped_fields),
 		primaryKey,create_args_string(len(escaped_fields)+1))

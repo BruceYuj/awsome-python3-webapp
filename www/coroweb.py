@@ -4,7 +4,7 @@ import asyncio,inspect,functools
 import importlib
 from aiohttp import web
 import logging
-
+from errors import APIError
 
 def get(path):
 	'''
@@ -56,16 +56,16 @@ class RequestHandler(object):
 		
 		#获取冲GET或POST传进来的参数值，如果函数表里面有这参数名就加入
 		kw = {arg:value for arg,value in request.__data__.items() if arg in required_args}
-		
+		#logging.info('now kw is:%s' %kw)
 		#获取match_info的参数值，例如@get('/blog/{id}')之类的参数值
 		kw.update(dict(**request.match_info))
-		
+		#logging.info('now kw is:%s' %kw)
 		#如果有request就加入
 		if 'request' in required_args:
 			kw['request']=request
-			
+		#logging.info('now kw is:%s' %kw)	
 		#检查参数
-		for key,arg in required_args:
+		for key,arg in required_args.items():
 			#request不能是var参数类型（*request or **request）
 			if key=='request' and arg.kind  in (inspect.Parameter.VAR_POSITIONAL,inspect.Parameter.VAR_KEYWORD):
 				return web.HTTPBadRequest(text='request parameter can not be he var argument.')
