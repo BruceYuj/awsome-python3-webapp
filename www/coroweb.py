@@ -1,9 +1,14 @@
 #-*- coding:utf-8 -*-
 
-import asyncio,inspect,functools
+import asyncio
+import inspect
+import functools
+import os
 import importlib
-from aiohttp import web
 import logging
+
+from aiohttp import web
+
 from errors import APIError
 
 def get(path):
@@ -110,4 +115,6 @@ def add_routes(app,module_name):
 			
 #添加静态文件，未完成
 def add_static(app):
-	pass
+	path = os.path.join(os.path.dirname(os.path.abspath(__file__)),'static')
+	app.router.add_static('/static/',path)
+	logging.info('add static %s => %s' %('/static/',path))
